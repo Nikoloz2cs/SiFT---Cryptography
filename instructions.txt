@@ -1,5 +1,6 @@
 Here are a few instructions and advise related to the project assignment.
 
+
 The zip file on Moodle contains the specification and implementation of version 0.5 of the SiFT protocols and a client and a server implementations that use the protocols. Note that this version of SiFT does not contain any cryptographic protection of messages, but the provided code fully implements the non-security related features (i.e., sending commands to the server for file manipulation and the download and upload of files in smaller pieces). 
 
 The zip file contains the following folders:
