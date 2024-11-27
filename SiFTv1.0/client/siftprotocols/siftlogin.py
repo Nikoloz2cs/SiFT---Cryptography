@@ -8,6 +8,8 @@ from Crypto.PublicKey import RSA
 from Crypto.Protocol.KDF import HKDF
 from Crypto.Cipher import AES
 from siftprotocols.siftmtp import SiFT_MTP, SiFT_MTP_Error
+from Crypto.Protocol.KDF import PBKDF2
+
 
 
 class SiFT_LOGIN_Error(Exception):
@@ -160,14 +162,29 @@ class SiFT_LOGIN:
         etk = msg_payload[-256:]
 
         # Decrypt the AES key using the server's private RSA key
-        with open('keypair.pem', 'rb') as f:
-            private_key = RSA.import_key(f.read())
+        with open('serverprivkey.pem', 'rb') as f:
+            data = f.read()
+            pwd = b'1234'
+            private_key = RSA.import_key(data, pwd)
         cipher_rsa = PKCS1_OAEP.new(private_key)
         temp_key = cipher_rsa.decrypt(etk)
 
         # Verify and process the request
         if not self.verify_login(login_req_struct, temp_key):
             raise SiFT_LOGIN_Error('Invalid login')
+
+        username = login_req_struct['username']
+        
+        # processing login request
+        hash_fn = SHA256.new()
+        hash_fn.update(msg_payload)
+        request_hash = hash_fn.digest()
+
+        login_req_struct = self.parse_login_req(msg_payload)
+        # building login response
+        login_res_struct = {}
+        login_res_struct['request_hash'] = request_hash
+        msg_payload = self.build_login_res(login_res_struct)
 
         if self.DEBUG:
             print("Received Login Request:")
@@ -254,7 +271,7 @@ class SiFT_LOGIN:
         client_random = get_random_bytes(16)
 
         # Encrypt the temporary AES key with the server's public RSA key
-        with open('serverkey.pem', 'rb') as f:
+        with open('serverpubkey.pem', 'rb') as f:
             public_key = RSA.import_key(f.read())
         cipher_rsa = PKCS1_OAEP.new(public_key)
         etk = cipher_rsa.encrypt(temp_key)
@@ -300,3 +317,22 @@ class SiFT_LOGIN:
     def derive_session_key(self, temp_key, client_random, server_random):
         key_material = client_random + server_random
         return HKDF(key_material, 32, temp_key, SHA256)
+        
+    def verify_login(self, login_req_struct, temp_key):
+        """
+        Verify the login request by checking the username and password.
+        """
+        username = login_req_struct['username']
+        password = login_req_struct['password']
+
+        if username not in self.server_users:
+            print(f"Verification failed: Unknown user '{username}'")
+            return False
+
+        user_struct = self.server_users[username]
+        if not self.check_password(password, user_struct):
+            print(f"Verification failed: Incorrect password for user '{username}'")
+            return False
+
+        print(f"Verification succeeded for user '{username}'")
+        return True

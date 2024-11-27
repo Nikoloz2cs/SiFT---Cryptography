@@ -2,6 +2,7 @@
 
 import sys, os, socket, cmd, getpass
 from Crypto.Hash import SHA256
+from Crypto.PublicKey import RSA
 from siftprotocols.siftmtp import SiFT_MTP, SiFT_MTP_Error
 from siftprotocols.siftlogin import SiFT_LOGIN, SiFT_LOGIN_Error
 from siftprotocols.siftcmd import SiFT_CMD, SiFT_CMD_Error
@@ -202,7 +203,7 @@ if __name__ == '__main__':
     loginp = SiFT_LOGIN(mtp)
 
     # Load RSA public key
-    with open('serverkey.pem', 'rb') as f:
+    with open('serverpubkey.pem', 'rb') as f:
         public_key = RSA.import_key(f.read())
     loginp.public_key = public_key  # Pass the public key to SiFT_LOGIN
 

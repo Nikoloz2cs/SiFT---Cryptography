@@ -21,8 +21,10 @@ class Server:
 
 
         # Load RSA private key for decrypting AES keys
-        with open('keypair.pem', 'rb') as f:
-            self.private_key = RSA.import_key(f.read())
+        with open('serverprivkey.pem', 'rb') as f:
+            data = f.read()
+            pwd = b'1234'
+            self.private_key = RSA.import_key(data, pwd)
         
         # -------------------------------------------------------------
         self.server_socket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
