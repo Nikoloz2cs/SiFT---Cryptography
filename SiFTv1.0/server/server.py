@@ -1,6 +1,7 @@
 #python3
 
 import sys, threading, socket, getpass
+from Crypto.PublicKey import RSA
 from siftprotocols.siftmtp import SiFT_MTP, SiFT_MTP_Error
 from siftprotocols.siftlogin import SiFT_LOGIN, SiFT_LOGIN_Error
 from siftprotocols.siftcmd import SiFT_CMD, SiFT_CMD_Error
@@ -16,6 +17,13 @@ class Server:
         self.server_ip = socket.gethostbyname('localhost')
         # self.server_ip = socket.gethostbyname(socket.gethostname())
         self.server_port = 5150
+        # -------------------------------------------------------------
+
+
+        # Load RSA private key for decrypting AES keys
+        with open('keypair.pem', 'rb') as f:
+            self.private_key = RSA.import_key(f.read())
+        
         # -------------------------------------------------------------
         self.server_socket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
         self.server_socket.bind((self.server_ip, self.server_port))
@@ -55,9 +63,11 @@ class Server:
         loginp = SiFT_LOGIN(mtp)
         users = self.load_users(self.server_usersfile)
         loginp.set_server_users(users)
+        loginp.private_key = self.private_key 
 
         try:
-            user = loginp.handle_login_server()
+            # Handle login and get session key
+            session_key, user = loginp.handle_login_server()
         except SiFT_LOGIN_Error as e:
             print('SiFT_LOGIN_Error: ' + e.err_msg)
             print('Closing connection with client on ' + addr[0] + ':' + str(addr[1]))
