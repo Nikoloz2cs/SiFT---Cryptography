@@ -62,10 +62,10 @@ class Server:
 
         mtp = SiFT_MTP(client_socket)
 
-        loginp = SiFT_LOGIN(mtp)
+        loginp = SiFT_LOGIN(mtp, self.private_key)
         users = self.load_users(self.server_usersfile)
         loginp.set_server_users(users)
-        loginp.private_key = self.private_key 
+        
 
         try:
             # Handle login and get session key

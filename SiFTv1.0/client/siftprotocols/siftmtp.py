@@ -1,6 +1,8 @@
 #python3
 
 import socket
+from Crypto.Random import get_random_bytes
+from Crypto.Cipher import PKCS1_OAEP, AES
 
 class SiFT_MTP_Error(Exception):
 
@@ -12,13 +14,17 @@ class SiFT_MTP:
 
 		self.DEBUG = False
 		# --------- CONSTANTS ------------
-		self.version_major = 0
-		self.version_minor = 5
-		self.msg_hdr_ver = b'\x00\x05'
-		self.size_msg_hdr = 6
+		self.version_major = 1
+		self.version_minor = 0
+		self.msg_hdr_ver = b'\x01\x00'
+		self.size_msg_hdr = 16
 		self.size_msg_hdr_ver = 2
 		self.size_msg_hdr_typ = 2
 		self.size_msg_hdr_len = 2
+		self.size_msg_hdr_sqn = 2
+		self.size_msg_hdr_rand = 6
+		self.size_msg_hdr_rsv = 2
+		self.size_mac = 12
 		self.type_login_req =    b'\x00\x00'
 		self.type_login_res =    b'\x00\x10'
 		self.type_command_req =  b'\x01\x00'
@@ -35,15 +41,23 @@ class SiFT_MTP:
 						  self.type_dnload_req, self.type_dnload_res_0, self.type_dnload_res_1)
 		# --------- STATE ------------
 		self.peer_socket = peer_socket
+		self.sqn = 0
 
+
+	# sets a session key
+	def set_session_key(self, session_key):
+		self.session_key = session_key
 
 	# parses a message header and returns a dictionary containing the header fields
 	def parse_msg_header(self, msg_hdr):
 
 		parsed_msg_hdr, i = {}, 0
-		parsed_msg_hdr['ver'], i = msg_hdr[i:i+self.size_msg_hdr_ver], i+self.size_msg_hdr_ver 
-		parsed_msg_hdr['typ'], i = msg_hdr[i:i+self.size_msg_hdr_typ], i+self.size_msg_hdr_typ
-		parsed_msg_hdr['len'] = msg_hdr[i:i+self.size_msg_hdr_len]
+		parsed_msg_hdr['ver'], i = msg_hdr[i : i + self.size_msg_hdr_ver], i + self.size_msg_hdr_ver 
+		parsed_msg_hdr['typ'], i = msg_hdr[i : i + self.size_msg_hdr_typ], i + self.size_msg_hdr_typ
+		parsed_msg_hdr['len'] = msg_hdr[i : i + self.size_msg_hdr_len]
+		parsed_msg_hdr['sqn'], i = msg_hdr[i : i + self.size_msg_hdr_sqn], i + self.size_msg_hdr_sqn
+		parsed_msg_hdr['rand'], i = msg_hdr[i : i + self.size_msg_hdr_rand], i + self.size_msg_hdr_rand
+		parsed_msg_hdr['rsv'], i = msg_hdr[i : i + self.size_msg_hdr_rsv], i + self.size_msg_hdr_rsv
 		return parsed_msg_hdr
 
 
@@ -65,7 +79,7 @@ class SiFT_MTP:
 
 
 	# receives and parses message, returns msg_type and msg_payload
-	def receive_msg(self):
+	def receive_msg(self, key):
 
 		try:
 			msg_hdr = self.receive_bytes(self.size_msg_hdr)
@@ -83,24 +97,73 @@ class SiFT_MTP:
 		if parsed_msg_hdr['typ'] not in self.msg_types:
 			raise SiFT_MTP_Error('Unknown message type found in message header')
 
+		if int.from_bytes(parsed_msg_hdr['sqn'], byteorder='big') < self.sqn:
+			raise SiFT_MTP_Error('Sequence number is incorrect')
+		else:
+			self.sqn = int.from_bytes(parsed_msg_hdr['sqn'], byteorder='big')
+
 		msg_len = int.from_bytes(parsed_msg_hdr['len'], byteorder='big')
 
 		try:
-			msg_body = self.receive_bytes(msg_len - self.size_msg_hdr)
+			if parsed_msg_hdr['typ'] == self.type_login_req:
+				size_etk = 256
+			else:
+				size_etk = 0
+			enc_msg_body = self.receive_bytes(msg_len - self.size_msg_hdr - self.size_mac - size_etk)
 		except SiFT_MTP_Error as e:
 			raise SiFT_MTP_Error('Unable to receive message body --> ' + e.err_msg)
+
+
+		if len(enc_msg_body) != msg_len - self.size_msg_hdr - self.size_mac - size_etk: 
+			raise SiFT_MTP_Error('Incomplete message body reveived')
+
+		# receive the MAC
+		try:
+			mac = self.receive_bytes(self.size_mac)
+		except SiFT_MTP_Error as e:
+			raise SiFT_MTP_Error('MAC was incorrectly received -->' + e.err_msg)
+
+		# receive the etk
+		if parsed_msg_hdr['typ'] == self.type_login_req:
+			try:
+				etk = self.receive_bytes(size_etk)
+			except SiFT_MTP_Error as e:
+				raise SiFT_MTP_Error('MAC was incorrectly received -->' + e.err_msg)
+			cipher_key = PKCS1_OAEP.new(self.session_key)
+			tk = cipher_key.decrypt(etk)
+
+			
+			cipher_payload = AES.new(tk, AES.MODE_GCM, mac_len=12, nonce = parsed_msg_hdr['sqn'] + parsed_msg_hdr['rand'])
+			cipher_payload.update(msg_hdr)
+			msg_body = cipher_payload.decrypt_and_verify(enc_msg_body, mac)
+			
+			self.tk = tk
+
+		elif parsed_msg_hdr['typ'] == self.type_login_res:
+			cipher_payload = AES.new(self.tk, AES.MODE_GCM, mac_len = 12, nonce = parsed_msg_hdr['sqn'] + parsed_msg_hdr['rand'])
+			cipher_payload.update(msg_hdr)
+			msg_body = cipher_payload.decrypt_and_verify(enc_msg_body, mac)
+			print('Login response received')
+
+
+		else:
+			cipher_payload = AES.new(self.session_key, AES.MODE_GCM, mac_len = 12, nonce = parsed_msg_hdr['sqn'] + parsed_msg_hdr['rand'])
+			cipher_payload.update(msg_hdr)
+			msg = cipher_payload.decrypt_and_verify(enc_msg_body, mac)
+
 
 		# DEBUG 
 		if self.DEBUG:
 			print('MTP message received (' + str(msg_len) + '):')
 			print('HDR (' + str(len(msg_hdr)) + '): ' + msg_hdr.hex())
-			print('BDY (' + str(len(msg_body)) + '): ')
-			print(msg_body.hex())
+			print('EPD (' + str(len(enc_msg_body)) + '): ')
+			print(enc_msg_body.hex())
+			print('MAC (' + str(len(mac)) + '):' + mac.hex())
+			if parsed_msg_hdr['typ'] == self.type_login_req:
+				print('ETK (' + str(len(etk)) + '):')
+				print(etk.hex())
 			print('------------------------------------------')
 		# DEBUG 
-
-		if len(msg_body) != msg_len - self.size_msg_hdr: 
-			raise SiFT_MTP_Error('Incomplete message body reveived')
 
 		return parsed_msg_hdr['typ'], msg_body
 
@@ -114,18 +177,62 @@ class SiFT_MTP:
 
 
 	# builds and sends message of a given type using the provided payload
-	def send_msg(self, msg_type, msg_payload):
-		
+	def send_msg(self, msg_type, msg_payload, session_key):
+
+		self.sqn += 1
+
 		# build message
-		msg_size = self.size_msg_hdr + len(msg_payload)
+		msg_size = self.size_msg_hdr + len(msg_payload) + 12
+		if msg_type == self.type_login_req:
+			msg_size += 256
+
 		msg_hdr_len = msg_size.to_bytes(self.size_msg_hdr_len, byteorder='big')
 		msg_hdr = self.msg_hdr_ver + msg_type + msg_hdr_len
+		msg_rsv = b'\x00\x00'
+		msg_rand = get_random_bytes(6)
+
+		if msg_type == self.type_login_req:
+			msg_sqn = self.sqn.to_bytes(self.size_msg_hdr_sqn, byteorder='big')
+			msg_hdr = self.msg_hdr_ver + msg_type + msg_hdr_len + msg_sqn + msg_rand + msg_rsv
+
+			temporary_key = get_random_bytes(32)
+			self.tk = temporary_key
+
+			cipher_key = PKCS1_OAEP.new(session_key)
+			cipher_payload = AES.new(temporary_key, AES.MODE_GCM, mac_len = 12, nonce = msg_sqn + msg_rand)
+			cipher_payload.update(msg_hdr)
+
+			enc_payload, mac = cipher_payload.encrypt_and_digest(msg_payload)
+			enc_temp_key = cipher_key.encrypt(temporary_key)
+			enc_msg = msg_hdr + enc_payload + mac + enc_temp_key
+			
+
+		elif msg_type == self.type_login_res:
+			msg_sqn = self.sqn.to_bytes(self.size_msg_hdr_sqn, byteorder='big')
+			msg_hdr = self.msg_hdr_ver + msg_type + msg_hdr_len + msg_sqn + msg_rand + msg_rsv
+
+			cipher_payload = AES.new(self.tk, AES.MODE_GCM, mac_len = 12, nonce = msg_sqn + msg_rand)
+			cipher_payload.update(msg_hdr)
+
+			enc_payload, mac = cipher_payload.encrypt_and_digest(msg_payload)
+			enc_msg = msg_hdr + enc_payload + mac
+
+		else:
+			msg_sqn = self.sqn.to_bytes(self.size_msg_hdr_sqn, byteorder='big')
+			msg_hdr = self.msg_hdr_ver + msg_type + msg_hdr_len + msg_sqn + msg_rand + msg_rsv
+
+			cipher_payload = AES.new(session_key, AES.MODE_GCM, mac_len = 12, nonce = msg_sqn + msg_rand)
+			cipher_payload.update(msg_hdr)
+			enc_payload, mac = cipher_payload.encrypt_and_digest(msg_payload)
+
+			enc_msg = msg_hdr + enc_payload + mac
+
 
 		# DEBUG 
 		if self.DEBUG:
 			print('MTP message to send (' + str(msg_size) + '):')
 			print('HDR (' + str(len(msg_hdr)) + '): ' + msg_hdr.hex())
-			print('BDY (' + str(len(msg_payload)) + '): ')
+			print('EPD (' + str(len(msg_payload)) + '): ')
 			print(msg_payload.hex())
 			print('------------------------------------------')
 		# DEBUG 

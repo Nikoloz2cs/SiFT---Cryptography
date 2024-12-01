@@ -199,13 +199,15 @@ if __name__ == '__main__':
     else:
         print('Connection to server established on ' + server_ip + ':' + str(server_port))
 
-    mtp = SiFT_MTP(sckt)
-    loginp = SiFT_LOGIN(mtp)
-
     # Load RSA public key
     with open('serverpubkey.pem', 'rb') as f:
         public_key = RSA.import_key(f.read())
-    loginp.public_key = public_key  # Pass the public key to SiFT_LOGIN
+    
+
+    mtp = SiFT_MTP(sckt)
+    loginp = SiFT_LOGIN(mtp, public_key)
+
+    
 
     print()
     username = input('   Username: ')
