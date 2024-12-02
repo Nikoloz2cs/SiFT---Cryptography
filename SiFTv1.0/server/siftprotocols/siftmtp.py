@@ -12,7 +12,7 @@ class SiFT_MTP_Error(Exception):
 class SiFT_MTP:
 	def __init__(self, peer_socket):
 
-		self.DEBUG = False
+		self.DEBUG = True
 		# --------- CONSTANTS ------------
 		self.version_major = 1
 		self.version_minor = 0
@@ -63,18 +63,21 @@ class SiFT_MTP:
 
 	# receives n bytes from the peer socket
 	def receive_bytes(self, n):
-
+		print("In receive bytes")
 		bytes_received = b''
 		bytes_count = 0
 		while bytes_count < n:
+			print("inputted n:", n)
 			try:
-				chunk = self.peer_socket.recv(n-bytes_count)
+				chunk = self.peer_socket.recv(n - bytes_count)
+				print("in receive bytes try statement")
 			except:
 				raise SiFT_MTP_Error('Unable to receive via peer socket')
 			if not chunk: 
 				raise SiFT_MTP_Error('Connection with peer is broken')
 			bytes_received += chunk
 			bytes_count += len(chunk)
+		print("End of recieve bytes")
 		return bytes_received
 
 
@@ -82,6 +85,7 @@ class SiFT_MTP:
 	def receive_msg(self, key):
 
 		try:
+			print("R In first try statement")
 			msg_hdr = self.receive_bytes(self.size_msg_hdr)
 		except SiFT_MTP_Error as e:
 			raise SiFT_MTP_Error('Unable to receive message header --> ' + e.err_msg)
@@ -101,6 +105,7 @@ class SiFT_MTP:
 			raise SiFT_MTP_Error('Sequence number is incorrect')
 		else:
 			self.sqn = int.from_bytes(parsed_msg_hdr['sqn'], byteorder='big')
+			print("R assigend seq num")
 
 		msg_len = int.from_bytes(parsed_msg_hdr['len'], byteorder='big')
 
@@ -109,7 +114,8 @@ class SiFT_MTP:
 				size_etk = 256
 			else:
 				size_etk = 0
-			enc_msg_body = self.receive_bytes(msg_len - self.size_msg_hdr - self.size_mac - size_etk)
+			enc_msg_body = self.receive_bytes(msg_len - self.size_msg_hdr)
+			print("R encrypted message body built")
 		except SiFT_MTP_Error as e:
 			raise SiFT_MTP_Error('Unable to receive message body --> ' + e.err_msg)
 
@@ -120,6 +126,7 @@ class SiFT_MTP:
 		# receive the MAC
 		try:
 			mac = self.receive_bytes(self.size_mac)
+			print("R mac recieved")
 		except SiFT_MTP_Error as e:
 			raise SiFT_MTP_Error('MAC was incorrectly received -->' + e.err_msg)
 
@@ -127,10 +134,12 @@ class SiFT_MTP:
 		if parsed_msg_hdr['typ'] == self.type_login_req:
 			try:
 				etk = self.receive_bytes(size_etk)
+				print('etk receiveds')
 			except SiFT_MTP_Error as e:
 				raise SiFT_MTP_Error('MAC was incorrectly received -->' + e.err_msg)
 			cipher_key = PKCS1_OAEP.new(self.session_key)
 			tk = cipher_key.decrypt(etk)
+			print("R temporary key in use")
 
 			
 			cipher_payload = AES.new(tk, AES.MODE_GCM, mac_len=12, nonce = parsed_msg_hdr['sqn'] + parsed_msg_hdr['rand'])
@@ -234,12 +243,14 @@ class SiFT_MTP:
 			print('HDR (' + str(len(msg_hdr)) + '): ' + msg_hdr.hex())
 			print('EPD (' + str(len(msg_payload)) + '): ')
 			print(msg_payload.hex())
+			print('MAC (' + str(len(mac)) + '):' + mac.hex())
 			print('------------------------------------------')
 		# DEBUG 
 
 		# try to send
 		try:
 			self.send_bytes(msg_hdr + msg_payload)
+			print("message sent")
 		except SiFT_MTP_Error as e:
 			raise SiFT_MTP_Error('Unable to send message to peer --> ' + e.err_msg)
 
