@@ -54,7 +54,7 @@ class SiFT_MTP:
 		parsed_msg_hdr, i = {}, 0
 		parsed_msg_hdr['ver'], i = msg_hdr[i : i + self.size_msg_hdr_ver], i + self.size_msg_hdr_ver 
 		parsed_msg_hdr['typ'], i = msg_hdr[i : i + self.size_msg_hdr_typ], i + self.size_msg_hdr_typ
-		parsed_msg_hdr['len'] = msg_hdr[i : i + self.size_msg_hdr_len]
+		parsed_msg_hdr['len'], i = msg_hdr[i : i + self.size_msg_hdr_len], i + self.size_msg_hdr_len
 		parsed_msg_hdr['sqn'], i = msg_hdr[i : i + self.size_msg_hdr_sqn], i + self.size_msg_hdr_sqn
 		parsed_msg_hdr['rand'], i = msg_hdr[i : i + self.size_msg_hdr_rand], i + self.size_msg_hdr_rand
 		parsed_msg_hdr['rsv'], i = msg_hdr[i : i + self.size_msg_hdr_rsv], i + self.size_msg_hdr_rsv
@@ -63,29 +63,31 @@ class SiFT_MTP:
 
 	# receives n bytes from the peer socket
 	def receive_bytes(self, n):
-		print("In receive bytes")
+		#print("In receive bytes")
 		bytes_received = b''
 		bytes_count = 0
 		while bytes_count < n:
-			print("inputted n:", n)
+			#print("inputted n:", n)
 			try:
 				chunk = self.peer_socket.recv(n - bytes_count)
-				print("in receive bytes try statement")
+				#print("in receive bytes try statement")
 			except:
 				raise SiFT_MTP_Error('Unable to receive via peer socket')
 			if not chunk: 
 				raise SiFT_MTP_Error('Connection with peer is broken')
 			bytes_received += chunk
 			bytes_count += len(chunk)
-		print("End of recieve bytes")
+		#print("End of recieve bytes")
 		return bytes_received
 
 
 	# receives and parses message, returns msg_type and msg_payload
-	def receive_msg(self, key):
+	def receive_msg(self, key=None):
+		if not key:
+			key = self.session_key
 
 		try:
-			print("R In first try statement")
+			#print("R In first try statement")
 			msg_hdr = self.receive_bytes(self.size_msg_hdr)
 		except SiFT_MTP_Error as e:
 			raise SiFT_MTP_Error('Unable to receive message header --> ' + e.err_msg)
@@ -105,7 +107,7 @@ class SiFT_MTP:
 			raise SiFT_MTP_Error('Sequence number is incorrect')
 		else:
 			self.sqn = int.from_bytes(parsed_msg_hdr['sqn'], byteorder='big')
-			print("R assigend seq num")
+			#print("R assigend seq num")
 
 		msg_len = int.from_bytes(parsed_msg_hdr['len'], byteorder='big')
 
@@ -114,8 +116,8 @@ class SiFT_MTP:
 				size_etk = 256
 			else:
 				size_etk = 0
-			enc_msg_body = self.receive_bytes(msg_len - self.size_msg_hdr - self.size_mac - size_etk)
-			print("R encrypted message body built")
+			enc_msg_body = self.receive_bytes(msg_len - self.size_msg_hdr - size_etk- self.size_mac)
+			#print("R encrypted message body built")
 		except SiFT_MTP_Error as e:
 			raise SiFT_MTP_Error('Unable to receive message body --> ' + e.err_msg)
 
@@ -125,8 +127,8 @@ class SiFT_MTP:
 
 		# receive the MAC
 		try:
-			mac = self.receive_bytes(self.size_mac - 256)
-			print("R mac recieved")
+			mac = self.receive_bytes(self.size_mac)
+			#print("R mac recieved")
 		except SiFT_MTP_Error as e:
 			raise SiFT_MTP_Error('MAC was incorrectly received -->' + e.err_msg)
 
@@ -134,12 +136,12 @@ class SiFT_MTP:
 		if parsed_msg_hdr['typ'] == self.type_login_req:
 			try:
 				etk = self.receive_bytes(size_etk)
-				print('etk receiveds')
+				#print('etk receiveds')
 			except SiFT_MTP_Error as e:
 				raise SiFT_MTP_Error('MAC was incorrectly received -->' + e.err_msg)
-			cipher_key = PKCS1_OAEP.new(self.session_key)
+			cipher_key = PKCS1_OAEP.new(key)
 			tk = cipher_key.decrypt(etk)
-			print("R temporary key in use")
+			#print("R temporary key in use")
 
 			
 			cipher_payload = AES.new(tk, AES.MODE_GCM, mac_len=12, nonce = parsed_msg_hdr['sqn'] + parsed_msg_hdr['rand'])
@@ -186,28 +188,29 @@ class SiFT_MTP:
 
 
 	# builds and sends message of a given type using the provided payload
-	def send_msg(self, msg_type, msg_payload, session_key):
+	def send_msg(self, msg_type, msg_payload, key = None):
+		if not key:
+			key = self.session_key
 
 		self.sqn += 1
 
-		# build message
+		# build message, with exception for login request
 		msg_size = self.size_msg_hdr + len(msg_payload) + 12
 		if msg_type == self.type_login_req:
 			msg_size += 256
 
+		# build message header
 		msg_hdr_len = msg_size.to_bytes(self.size_msg_hdr_len, byteorder='big')
-		msg_hdr = self.msg_hdr_ver + msg_type + msg_hdr_len
-		msg_rsv = b'\x00\x00'
+		msg_sqn = self.sqn.to_bytes(self.size_msg_hdr_sqn, byteorder='big')
 		msg_rand = get_random_bytes(6)
+		msg_rsv = b'\x00\x00'
+		msg_hdr = self.msg_hdr_ver + msg_type + msg_hdr_len + msg_sqn + msg_rand + msg_rsv
 
 		if msg_type == self.type_login_req:
-			msg_sqn = self.sqn.to_bytes(self.size_msg_hdr_sqn, byteorder='big')
-			msg_hdr = self.msg_hdr_ver + msg_type + msg_hdr_len + msg_sqn + msg_rand + msg_rsv
-
 			temporary_key = get_random_bytes(32)
 			self.tk = temporary_key
 
-			cipher_key = PKCS1_OAEP.new(session_key)
+			cipher_key = PKCS1_OAEP.new(key)
 			cipher_payload = AES.new(temporary_key, AES.MODE_GCM, mac_len = 12, nonce = msg_sqn + msg_rand)
 			cipher_payload.update(msg_hdr)
 
@@ -217,9 +220,6 @@ class SiFT_MTP:
 			
 
 		elif msg_type == self.type_login_res:
-			msg_sqn = self.sqn.to_bytes(self.size_msg_hdr_sqn, byteorder='big')
-			msg_hdr = self.msg_hdr_ver + msg_type + msg_hdr_len + msg_sqn + msg_rand + msg_rsv
-
 			cipher_payload = AES.new(self.tk, AES.MODE_GCM, mac_len = 12, nonce = msg_sqn + msg_rand)
 			cipher_payload.update(msg_hdr)
 
@@ -227,10 +227,7 @@ class SiFT_MTP:
 			enc_msg = msg_hdr + enc_payload + mac
 
 		else:
-			msg_sqn = self.sqn.to_bytes(self.size_msg_hdr_sqn, byteorder='big')
-			msg_hdr = self.msg_hdr_ver + msg_type + msg_hdr_len + msg_sqn + msg_rand + msg_rsv
-
-			cipher_payload = AES.new(session_key, AES.MODE_GCM, mac_len = 12, nonce = msg_sqn + msg_rand)
+			cipher_payload = AES.new(self.session_key, AES.MODE_GCM, mac_len = 12, nonce = msg_sqn + msg_rand)
 			cipher_payload.update(msg_hdr)
 			enc_payload, mac = cipher_payload.encrypt_and_digest(msg_payload)
 
@@ -249,7 +246,7 @@ class SiFT_MTP:
 
 		# try to send
 		try:
-			self.send_bytes(msg_hdr + msg_payload)
+			self.send_bytes(enc_msg)
 			print("message sent")
 		except SiFT_MTP_Error as e:
 			raise SiFT_MTP_Error('Unable to send message to peer --> ' + e.err_msg)

@@ -24,7 +24,7 @@ class SiFT_LOGIN:
         # --------- CONSTANTS ------------
         self.delimiter = '\n'
         self.coding = 'utf-8'
-        self.timestamp_range = 1
+        self.timestamp_range = 1000000000 #in nanoseconds based on specifications
         # --------- STATE ------------
         self.mtp = mtp
         self.server_users = None 
@@ -38,7 +38,7 @@ class SiFT_LOGIN:
 
     # builds a login request from a dictionary
     def build_login_req(self, login_req_struct):
-        login_req_str = str(time.time())
+        login_req_str = str(time.time_ns())
         login_req_str += self.delimiter + login_req_struct['username']
         login_req_str += self.delimiter + login_req_struct['password'] 
         login_req_str += self.delimiter + login_req_struct['client_random'].hex()
@@ -114,7 +114,7 @@ class SiFT_LOGIN:
 
         # check client timestamp and create window
         client_time = int(login_req_struct['timestamp'])
-        server_time = time.time()
+        server_time = time.time_ns()
 
         if client_time < server_time - self.timestamp_range or client_time > server_time + self.timestamp_range:
             raise SiFT_LOGIN_Error('Timestamp out of expected range')

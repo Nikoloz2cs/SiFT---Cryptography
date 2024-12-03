@@ -69,7 +69,7 @@ class Server:
 
         try:
             # Handle login and get session key
-            session_key, user = loginp.handle_login_server()
+            user = loginp.handle_login_server()
         except SiFT_LOGIN_Error as e:
             print('SiFT_LOGIN_Error: ' + e.err_msg)
             print('Closing connection with client on ' + addr[0] + ':' + str(addr[1]))
