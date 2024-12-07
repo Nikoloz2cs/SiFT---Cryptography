@@ -1,6 +1,7 @@
 #python3
 
 import socket
+from base64 import b64encode, b64decode
 from Crypto.Random import get_random_bytes
 from Crypto.Cipher import PKCS1_OAEP, AES
 
@@ -82,7 +83,7 @@ class SiFT_MTP:
 
 
 	# receives and parses message, returns msg_type and msg_payload
-	def receive_msg(self, key=None):
+	def receive_msg(self, key = None):
 		if not key:
 			key = self.session_key
 
@@ -156,11 +157,11 @@ class SiFT_MTP:
 			msg_body = cipher_payload.decrypt_and_verify(enc_msg_body, mac)
 			print('Login response received')
 
-
 		else:
 			cipher_payload = AES.new(self.session_key, AES.MODE_GCM, mac_len = 12, nonce = parsed_msg_hdr['sqn'] + parsed_msg_hdr['rand'])
 			cipher_payload.update(msg_hdr)
-			msg = cipher_payload.decrypt_and_verify(enc_msg_body, mac)
+			msg_body = cipher_payload.decrypt_and_verify(enc_msg_body, mac)
+			#msg_body = b64decode(enc_msg_body)
 
 
 		# DEBUG 
@@ -217,6 +218,8 @@ class SiFT_MTP:
 			enc_payload, mac = cipher_payload.encrypt_and_digest(msg_payload)
 			enc_temp_key = cipher_key.encrypt(temporary_key)
 			enc_msg = msg_hdr + enc_payload + mac + enc_temp_key
+
+			
 			
 
 		elif msg_type == self.type_login_res:
@@ -226,12 +229,15 @@ class SiFT_MTP:
 			enc_payload, mac = cipher_payload.encrypt_and_digest(msg_payload)
 			enc_msg = msg_hdr + enc_payload + mac
 
+
 		else:
 			cipher_payload = AES.new(self.session_key, AES.MODE_GCM, mac_len = 12, nonce = msg_sqn + msg_rand)
 			cipher_payload.update(msg_hdr)
 			enc_payload, mac = cipher_payload.encrypt_and_digest(msg_payload)
 
 			enc_msg = msg_hdr + enc_payload + mac
+
+
 
 
 		# DEBUG 

@@ -11,7 +11,7 @@ from siftprotocols.siftdnl import SiFT_DNL, SiFT_DNL_Error
 
 # ----------- CONFIG -------------
 server_ip = '127.0.0.1' # localhost
-# server_ip = '192.168.x.y'
+# server_ip = '192.168.20.8'
 server_port = 5150
 # --------------------------------
 
@@ -201,6 +201,7 @@ if __name__ == '__main__':
 
     # Load RSA public key
     with open('serverpubkey.pem', 'rb') as f:
+    #with open('serverpubkey.pem', 'rb') as f:
         public_key = RSA.import_key(f.read())
     
 
